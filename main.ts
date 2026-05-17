@@ -28,9 +28,10 @@ export default class VibeProxyPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
+    // Add a command to send selected text to VibeProxy
     this.addCommand({
       id: "generate-via-vibeproxy",
-      name: "Отправить выделенный текст в VibeProxy",
+      name: "Send selected text to VibeProxy",
       editorCallback: async (
         editor: Editor,
         view: MarkdownView | MarkdownFileInfo,
@@ -38,32 +39,39 @@ export default class VibeProxyPlugin extends Plugin {
         const selection = editor.getSelection();
 
         if (!selection) {
-          new Notice("Пожалуйста, выделите текст для отправки.");
+          new Notice("Please select text to send.");
           return;
         }
 
-        new Notice("Отправка запроса в VibeProxy...");
+        new Notice("Sending request to VibeProxy...");
 
         try {
           const response = await this.callVibeProxy(selection);
+          // Append the AI response below the selected text
           editor.replaceSelection(`${selection}\n\n**AI:** ${response}\n`);
         } catch (error) {
           console.error("VibeProxy Error:", error);
-          new Notice("Ошибка при обращении к VibeProxy. Проверьте консоль.");
+          new Notice("Error when contacting VibeProxy. Check the console.");
         }
       },
     });
 
+    // Register the settings tab
     this.addSettingTab(new VibeProxySettingTab(this.app, this));
   }
 
-  async callVibeProxy(prompt: string): Promise<string> {
+  async callVibeProxy(prompt: string, maxTokens?: number): Promise<string> {
     const endpoint = `${this.settings.proxyUrl}/chat/completions`;
 
-    const payload = {
+    const payload: any = {
       model: this.settings.model,
       messages: [{ role: "user", content: prompt }],
     };
+
+    // Add max_tokens if provided (useful for quick connection tests)
+    if (maxTokens) {
+      payload.max_tokens = maxTokens;
+    }
 
     const response = await requestUrl({
       url: endpoint,
@@ -81,6 +89,11 @@ export default class VibeProxyPlugin extends Plugin {
 
     const data = response.json;
     return data.choices[0].message.content;
+  }
+
+  async testConnection(): Promise<void> {
+    // Send a tiny request to verify that the server is reachable and processing correctly
+    await this.callVibeProxy("test", 5);
   }
 
   async loadSettings() {
@@ -107,11 +120,11 @@ class VibeProxySettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("VibeProxy Base URL")
       .setDesc(
-        "Укажите URL вашего локального прокси (например, http://localhost:8080/v1)",
+        "Specify the URL of your local proxy (e.g., http://localhost:8317/v1)",
       )
       .addText((text) =>
         text
-          .setPlaceholder("http://localhost:8080/v1")
+          .setPlaceholder("http://localhost:8317/v1")
           .setValue(this.plugin.settings.proxyUrl)
           .onChange(async (value) => {
             this.plugin.settings.proxyUrl = value;
@@ -121,7 +134,9 @@ class VibeProxySettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("API Key")
-      .setDesc("Оставьте заглушку, если VibeProxy не требует аутентификации")
+      .setDesc(
+        "Leave the placeholder if VibeProxy does not require authentication",
+      )
       .addText((text) =>
         text
           .setPlaceholder("sk-...")
@@ -135,7 +150,7 @@ class VibeProxySettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Model")
       .setDesc(
-        "Название модели, которую ожидает OpenAI API (например, gpt-4o или gpt-4)",
+        "The name of the model expected by the OpenAI API (e.g., gpt-4o or gpt-4)",
       )
       .addText((text) =>
         text
@@ -145,6 +160,29 @@ class VibeProxySettingTab extends PluginSettingTab {
             this.plugin.settings.model = value;
             await this.plugin.saveSettings();
           }),
+      );
+
+    // Test Connection Button Setting
+    new Setting(containerEl)
+      .setName("Test Connection")
+      .setDesc("Send a test request to verify network and model settings.")
+      .addButton((button) =>
+        button.setButtonText("Test Connection").onClick(async () => {
+          button.setButtonText("Testing...");
+          button.setDisabled(true);
+
+          try {
+            await this.plugin.testConnection();
+            new Notice("✅ Success! VibeProxy is reachable.");
+          } catch (error) {
+            console.error("Test Connection Error:", error);
+            new Notice("❌ Connection Error! Check the console for details.");
+          } finally {
+            // Reset button state regardless of success or failure
+            button.setButtonText("Test Connection");
+            button.setDisabled(false);
+          }
+        }),
       );
   }
 }
